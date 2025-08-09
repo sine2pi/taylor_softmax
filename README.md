@@ -63,7 +63,7 @@ class rotary(nn.Module):
         self.dims = dims
         self.head = head
         self.head_dim = dims // head
-
+        self.taylor_order = 5
         self.theta = nn.Parameter((torch.tensor(1600, device=device, dtype=dtype)), requires_grad=False)  
         self.register_buffer('freqs_base', self._compute_freqs_base(), persistent=False)
 
