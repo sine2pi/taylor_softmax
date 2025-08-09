@@ -35,8 +35,6 @@
 
 #####
 
-import torch
-
 def taylor_sine(x, order=5):
     result = torch.zeros_like(x)
     for i in range(order + 1):
@@ -94,7 +92,6 @@ def rotate_half(x):
     return torch.cat((-x2, x1), dim=-1)
 
 ############# 
-
 
 class Tippecanoe_and_Tyler_too(nn.Module):
     def __init__(self, dim, max_terms=4, learned_coeff=True, device=None):
