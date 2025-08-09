@@ -89,4 +89,58 @@ class Tippecanoe_and_Tyler_too(nn.Module):
         freqs_cos = cos_terms.view(batch_size, -1, 1).repeat(1, 1, self.dim//2)
         freqs = torch.stack([freqs_cos, freqs_sin], dim=-1).flatten(-2)
         return freqs
-        
+
+
+############
+
+def vectorized_taylor_sine(x, order=5):
+    original_shape = x.shape
+    x = x.flatten(0, -2)
+    exponents = torch.arange(1, order + 1, 2, device=x.device, dtype=torch.float32)
+    x_powers = x.unsqueeze(-1) ** exponents
+    factorials = torch.exp(torch.lgamma(exponents + 1))
+    signs = (-1)**(torch.arange(0, len(exponents), device=x.device, dtype=torch.float32))
+    terms = signs * x_powers / factorials
+    result = terms.sum(dim=-1)
+    return result.view(original_shape)
+
+def vectorized_taylor_cosine(x, order=5):
+    original_shape = x.shape
+    x = x.flatten(0, -2)
+    exponents = torch.arange(0, order + 1, 2, device=x.device, dtype=torch.float32)
+    x_powers = x.unsqueeze(-1) ** exponents
+    factorials = torch.exp(torch.lgamma(exponents + 1))
+    signs = (-1)**(torch.arange(0, len(exponents), device=x.device, dtype=torch.float32))
+    terms = signs * x_powers / factorials
+    result = terms.sum(dim=-1)
+    return result.view(original_shape)
+
+class rotary_vec(nn.Module):
+    def __init__(self, dims, head):
+        super(rotary, self).__init__()
+        self.dims = dims
+        self.head = head
+        self.head_dim = dims // head
+        self.taylor_order = 5
+
+        self.theta = nn.Parameter((torch.tensor(16000, device=device, dtype=dtype)), requires_grad=False)  
+        self.register_buffer('freqs_base', self._compute_freqs_base(), persistent=False)
+
+    def _compute_freqs_base(self):
+        mel_scale = torch.pow(10, torch.linspace(0, 2595 * torch.log10(torch.tensor(1 + 4000/200)), self.head_dim // 2, device=device, dtype=dtype) / 2595) - 1
+        return 200 * mel_scale / 1000 
+
+    def forward(self, x) -> torch.Tensor:
+        positions = (torch.arange(0, x.shape[2], device=x.device))
+        freqs = (self.theta / 220.0) * self.freqs_base
+        freqs = positions[:, None] * freqs 
+        freqs_rescaled = (freqs + torch.pi) % (2 * torch.pi) - torch.pi 
+
+        with torch.autocast(device_type="cuda", enabled=False):
+            cos = vectorized_taylor_cosine(freqs_rescaled, order=self.taylor_order)
+            sin = vectorized_taylor_sine(freqs_rescaled, order=self.taylor_order)
+            rotary_dim = cos.shape[-1] 
+            x_rot, x_pass = x[..., :rotary_dim], x[..., rotary_dim:]
+            x_embed = (x_rot * cos) + (rotate_half(x_rot) * sin)
+            x_embed = torch.cat([x_embed, x_pass], dim=-1)
+            return x_embed.type_as(x)
